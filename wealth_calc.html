@@ -1,0 +1,454 @@
+<html>
+<head>
+	<meta charset="utf8"> 
+	
+	<link rel="stylesheet" type="text/css" href="http://cdnjs.cloudflare.com/ajax/libs/metrics-graphics/2.4.0/metricsgraphics.min.css" />
+	<link rel="stylesheet" type="text/css" href="./bada55.css" />
+
+	
+	<style>
+		
+		body {
+			padding: 10px;
+			margin: 0px;
+			font-family: 'Sans Serif';
+			width: 100% !important;
+		}
+		
+		li {
+			padding-bottom: 2px;
+		}
+	
+		input[type=edit] {
+			background-color: #444444;
+			color: #dddddd;
+		}
+
+		.left {
+			float: left;
+			display: block;
+		}
+
+	
+	
+		/* chart */
+		.mg-x-axis text, .mg-y-axis text, .mg-histogram .axis text {
+			fill: #fff;
+		}
+		
+		.mg-markers text {
+			fill: #fff;
+		}
+		text {
+			fill: #fff;
+		}
+		.mg-active-datapoint {
+			fill: #fff;
+		}
+		
+		.mg-line6-color, .mg-line6-legend-color, .mg-hover-line6-color, .mg-area6-color {
+			stroke: purple;
+			fill: purple;
+		}
+
+		.mg-line7-color, .mg-line7-legend-color, .mg-hover-line7-color, .mg-area7-color {
+			stroke: cyan;
+			fill: cyan;
+		}
+
+		.mg-line8-color, .mg-line8-legend-color, .mg-hover-line8-color, .mg-area8-color {
+			stroke: pink;
+			fill: pink;
+		}
+		
+		.mg-line9-color, .mg-line9-legend-color, .mg-hover-line9-color, .mg-area9-color {
+			stroke: lime;
+			fill: lime;
+		}
+	
+
+	</style>
+
+	<script src="http://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
+	<script src="http://cdnjs.cloudflare.com/ajax/libs/moment.js/2.1.0/moment.min.js"></script>
+	<script src="http://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"></script>
+	<script src="http://cdnjs.cloudflare.com/ajax/libs/handlebars.js/1.0.0/handlebars.min.js"></script>
+	<script src="http://cdnjs.cloudflare.com/ajax/libs/d3/3.5.5/d3.min.js"></script>
+	<script src="http://cdnjs.cloudflare.com/ajax/libs/metrics-graphics/2.4.0/metricsgraphics.js"></script>
+	<script type="text/javascript">
+		
+		function min(a,b) { return a < b ? a : b };
+		function max(a,b) { return a >= b ? a : b };
+		
+		var nextID = 1;
+		var HB = {};
+		
+		Handlebars.registerHelper('df',  function(d, fmtStr) {
+			if(typeof d == 'undefined' || d == null) {
+				return 'Unknown';
+			}
+			var fs = typeof fmtStr == "string" ? fmtStr : "YYYY-MM-DD";
+			return moment(d).format(fs);
+		});
+		
+		Handlebars.registerHelper('$',  function(n) {
+			return parseFloat(n).toMoney()
+		});
+		
+		$(function() {
+		
+			$('script[type="x-application/handlebars"]').each(function() {
+				HB[$(this).attr('name')] = Handlebars.compile($(this).html());
+			});
+		});
+		
+		$(function() {
+			$('.editor [json]').val(''); // fuck you firefox
+			$('.editor [json="date"]').val(moment().format('YYYY-MM-DD'));
+		})
+
+		
+		Number.prototype.toMoney = function() { 
+// 		return this;
+			var str = (this.toFixed(2)+'').toString();
+			var x = 3 - str.length;
+			if(x > 0) {
+				str = (x > 1 ? '00' : '0') + str ;
+			}
+			return str.replace(/\B(\d\d)$/, '.$1').replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+		};
+		</script>
+	
+	<script>
+		
+		//var mon_interest = ARP / 12; // only works for /APR/, not "annual interest rate"
+		
+		/*
+		A = periodic payment amount
+		P = net principle
+		i = periodic interest rate (mon_interest above)
+		n = total number of payments (first payment is 30 days after the loan originates)
+		p(t) = principle remaining at time t
+		
+		A = P(((i(1_i)^n) / ((1+i)^n - 1))
+		  = (Pi) / (1- (1+i)^-n)
+		  = P(i + ( i / ((1+i)^n - 1) ) 
+		
+		p(t) / P = 1 - ( ((1+it^t - 1)) / ((1+i)^n - 1) )
+		
+		
+		calculation of mortgage stuff:
+		
+		1) calculate the monthly payment amount using loan amount and interest
+		
+		2) for each pay period, 
+			calc interest i_p = (remaining balance * monthly interest)
+			calc payment principle = payment - i_p
+			calc new blance = first balance - payment principle
+		*/
+		
+		function makeRow() {
+			return $('<tr>' + Array.prototype.slice.apply(arguments).map(function(x) { return '<td>' + (x.toMoney && x.toMoney() || x) + '</td>' }).join(' ') + '</tr>');
+		}
+		
+		function monthlyPayment(loan_amount, monthly_interest, num_payments) {
+			return (loan_amount * monthly_interest) / (1 - Math.pow(1 + monthly_interest, -num_payments) );
+		}
+		
+		function piRatios(balance, monthly_interest, payment_amount) {
+			var i_p = balance * monthly_interest;
+			return {
+				principle: payment_amount - i_p,
+				interest: i_p,
+				new_balance: balance - payment_amount + i_p,
+			};
+		}
+		
+		
+		function annualToMonthlyInterest(annual) {
+			return Math.pow(1 + annual, 1/12) - 1;
+		}
+		
+		
+	
+		
+		function prettyPeriod(n) {
+			var y = Math.floor(n / 12);
+			var mons = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun','Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+			var m = mons[n % 12];
+			return m + ', ' + y;
+		}
+		
+		function whyIsntThisBuiltIn(qstr) {
+			return _.object(qstr.split('&').map(function(c) {
+				return c.split('=').map(decodeURIComponent);
+			}));
+		}
+		
+		
+		// initialize any values given in the url
+		$(function(){ 
+			var d = _.mapObject(whyIsntThisBuiltIn(window.location.hash.replace(/^#/, '')), parseFloat);
+			
+			for(var k in d) {
+				$('[data-json="'+k+'"]').val(d[k]);
+			}
+		});
+
+
+
+	
+		
+		
+
+		
+		
+		function grabData(parent) {
+			var data = {};
+			
+			var formatters = {
+				string: function(x) { return x },
+				pct: function(x) { return parseFloat(x) * .01 },
+				amort: function(x) { return parseFloat(x) / 12 },
+				num: parseFloat,
+			};
+			
+			parent.find('[data-json]').each(function() {
+				var n = $(this);
+				
+				var name = n.attr('data-json');
+				var val = n.val();
+				
+				var fmt = n.attr('fmt') || 'num';
+				console.log(name, val);
+				
+				data[name] = formatters[fmt](val);
+			});
+			
+			return data;
+		};
+		
+		
+		
+		
+		function mkChart(sel, title, data) {
+			
+			
+			var legend = [];
+			
+			var d2 = data.map(function(ds) {
+				legend.push(ds[0]);
+				return ds[1].map(function(x, k) {
+					return {
+						period: k,
+						value: x,
+					}
+				});
+			});
+			
+			
+			console.log(d2);
+			
+//  			d2 = MG.convert.date(d2, 'date');
+			MG.data_graphic({
+				title: title,
+				data: d2,
+				width: 1100,
+				height: 500,
+				area: false,
+				right: 100,
+				left: 70,
+				target: sel,
+				x_accessor: 'period',
+				y_accessor: 'value',
+				yax_units: '$',
+				xax_count: 12,
+				decimals: 0,
+				legend: legend,
+			});
+			
+// 			var ctx = $(sel)[0].getContext("2d");
+// 			var chart = new Chart(ctx).Line(chartData, opts);
+// 			
+// 			
+			
+		}
+		
+		
+		
+		$(function() {
+			$('.go').click(function(e) {
+				e.preventDefault(); 
+				calcTable('mortgage'); 
+// 				calcAppartment('appartment');
+			});
+			
+
+		});
+		
+		
+		function initSlider(parent) {
+			
+			parent = $(parent).addClass('slider');
+			
+			var value = $('<div></div>').addClass('value');
+			var slide = $('<div></div>').addClass('slide');
+			var bar = $('<div></div>').addClass('bar');
+			var handle = $('<div></div>').addClass('handle');
+			var value = $('<div></div>').addClass('value');
+			
+			slide.append([bar, handle, value]);
+			parent.append([slide, value]);
+			
+			var clickOffset = 0;
+			var range = bar.width() - handle.width();
+			
+			function onDragMove(e) {
+				var x = e.pageX - slide.offset().left - clickOffset;
+				x = min(max(x, 0), range);
+				
+				handle.css({left: x + 'px'});
+				
+				value.html((x*100/range).toFixed() + '%');
+				
+				parent.attr('percent', x/range);
+				parent.trigger('change', x/range, value);
+			}
+			
+			function startDrag(e) {
+				clickOffset = e.pageX - handle.offset().left;
+				$(document).on('mousemove', onDragMove);
+				$(document).on('mouseup', stopDrag);
+			}
+			
+			function stopDrag() {
+				$(document).off('mousemove', onDragMove);
+			}
+			
+			
+			handle.on('mousedown', startDrag);
+			
+			
+		};
+		
+		
+		function rangeSlider(elem, minV, maxV) {
+			elem = $(elem);
+			
+			initSlider(elem);
+			elem.on('change', function(e, pct, disp) {
+				
+				var x = (minV + (pct * (maxV - minV))).round(); 
+				
+				elem.attr('value', x);
+				disp(x)
+			});
+			
+			
+		}
+		
+		var fc = $('.figures');
+		
+		var figures = {};
+		
+		
+		function addFigure(name) {
+			
+			// find or create the dom node
+			var n = fc.find('[fig="'+name+'"]');
+			
+			if(!n) {
+				n = $('<div fig="'+name'"></div>');
+				n.appendTo(fc);
+			}
+			
+			// find or create the value
+			if(figures[name]) figures[name] = 0;
+			
+			
+			function Fig(val) {
+				return {
+					newVal: function(f) {
+						return Fig(f(val));
+					}
+				}
+			}
+			
+			return {
+				newVal: function(next) {
+					next(val);
+				}
+			}
+		};
+		
+		
+		
+		
+		
+		$(function() {
+			
+			
+			rangeSlider('.land', 5000, 50000);
+		});
+		
+	</script>
+	
+	<style>
+		.slider {
+			width: 300px;
+			padding: 5px;
+			padding-right: 80px;
+			background-color: purple;
+			position: relative;
+		}
+		
+		.slider .slide {
+			position: relative;
+			width: 100%;
+			height: 20px;
+		}
+		.slider .slide .bar {
+			background-color: black;
+			position: absolute;
+			top: 5px;
+			left: 0px;
+			width: 100%;
+			height: 10px;
+		}
+		.slider .slide .handle {
+			width: 20px;
+			height: 20px;
+			background-color: green;
+			position: absolute;
+			left: 0px;
+			top: 0px;
+		}
+		.slider  .value {
+			width: 65px;
+			height: 20px;
+			background-color: green;
+			font-size: 16px;
+			font-family: 'Sans Serif';
+			text-align: right;
+			position: absolute;
+			right: 0px;
+			top: 0px;
+			color: white;
+			padding: 5px 5px;
+		}
+	
+	</style>
+</head>
+<body>
+	
+	<!--div class="slider"></div-->
+	
+	<div class="figures"><div>
+	
+
+	
+	
+	
+</body>
+
+</html>
