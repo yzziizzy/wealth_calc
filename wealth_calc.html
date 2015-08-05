@@ -341,7 +341,9 @@
 				var x = (minV + (pct * (maxV - minV))).round(); 
 				
 				elem.attr('value', x);
-				disp(x)
+				disp(x);
+				
+				elem.trigger('updated');
 			});
 			
 			
@@ -352,7 +354,9 @@
 		var figures = {};
 		
 		
-		function addFigure(name) {
+		
+		
+		function figure(name) {
 			
 			// find or create the dom node
 			var n = fc.find('[fig="'+name+'"]');
@@ -363,20 +367,16 @@
 			}
 			
 			// find or create the value
-			if(figures[name]) figures[name] = 0;
+			if(figures[name] == undefined) figures[name] = 0;
 			
+			rangeSlider(n, 1000, 50000);
 			
-			function Fig(val) {
-				return {
-					newVal: function(f) {
-						return Fig(f(val));
-					}
-				}
-			}
 			
 			return {
-				newVal: function(next) {
-					next(val);
+				change: function(fn) {
+					n.on('changed', function() {
+						fn(parseFloat(n.attr('value')));
+					});
 				}
 			}
 		};
@@ -384,11 +384,33 @@
 		
 		
 		
+		function sum(name, a, b) {
+			var av = 0, bv = 0, cf;
+			
+			function changed() {
+				figures[name] = av + bv;
+				cf(av + bv);
+			}
+			
+			a.change(function(aval) { av = aval; changed() });
+			b.change(function(bval) { bv = aval; changed() });
+			
+			
+			return {
+				changed: function(fn) {
+					cf = fn;
+				}
+			}
+		}
+		
+		
+		
 		
 		$(function() {
 			
 			
-			rangeSlider('.land', 5000, 50000);
+			
+// 			rangeSlider('.land', 5000, 50000);
 		});
 		
 	</script>
